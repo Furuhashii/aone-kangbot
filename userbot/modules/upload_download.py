@@ -1,356 +1,200 @@
-# Copyright (C) 2019 The Raphielscape Company LLC.
-#
-# Licensed under the Raphielscape Public License, Version 1.d (the "License");
-# you may not use this file except in compliance with the License.
-#
-# The entire source code is OSSRPL except
-# 'download, uploadir, uploadas, upload' which is MPL
-# License: MPL and OSSRPL
-""" Userbot module which contains everything related to \
-    downloading/uploading from/to the server. """
-
-import json
-import os
-import subprocess
 import time
+import datetime
+import os
 import math
+import multiprocessing
+import random
+import re
+import json
 
-from pySmartDL import SmartDL
 import asyncio
-from hachoir.metadata import extractMetadata
-from hachoir.parser import createParser
-from telethon.tl.types import DocumentAttributeVideo
+from asyncio import create_subprocess_shell as asyncSubprocess
+from asyncio.subprocess import PIPE as asyncPIPE
+from urllib.error import HTTPError
 
-from userbot import LOGS, CMD_HELP, TEMP_DOWNLOAD_DIRECTORY
-from userbot.utils import progress, humanbytes
-from userbot.events import register
+from nana import app, Command, log
+from nana.helpers import time_formatter, time_parser_int, time_parser, convert_size
+from pyrogram import errors, Filters, InlineKeyboardMarkup, InputTextMessageContent, InlineKeyboardButton
+from pySmartDL import SmartDL
 
+__MODULE__ = "Downloads"
 
-@register(pattern=r".download(?: |$)(.*)", outgoing=True)
-async def download(target_file):
-    """ For .download command, download files to the userbot's server. """
-    await target_file.edit("Processing ...")
-    input_str = target_file.pattern_match.group(1)
-    if not os.path.isdir(TEMP_DOWNLOAD_DIRECTORY):
-        os.makedirs(TEMP_DOWNLOAD_DIRECTORY)
-    if "|" in input_str:
-        url, file_name = input_str.split("|")
-        url = url.strip()
-        # https://stackoverflow.com/a/761825/4723940
-        file_name = file_name.strip()
-        head, tail = os.path.split(file_name)
-        if head:
-            if not os.path.isdir(os.path.join(TEMP_DOWNLOAD_DIRECTORY, head)):
-                os.makedirs(os.path.join(TEMP_DOWNLOAD_DIRECTORY, head))
-                file_name = os.path.join(head, tail)
-        downloaded_file_name = TEMP_DOWNLOAD_DIRECTORY + "" + file_name
-        downloader = SmartDL(url, downloaded_file_name, progress_bar=False)
-        downloader.start(blocking=False)
-        c_time = time.time()
-        display_message = None
-        while not downloader.isFinished():
-            status = downloader.get_status().capitalize()
-            total_length = downloader.filesize if downloader.filesize else None
-            downloaded = downloader.get_dl_size()
-            now = time.time()
-            diff = now - c_time
-            percentage = downloader.get_progress() * 100
-            speed = downloader.get_speed()
-            progress_str = "[{0}{1}] `{2}%`".format(
-                ''.join(["■" for i in range(
-                    math.floor(percentage / 10))]),
-                ''.join(["▨" for i in range(
-                    10 - math.floor(percentage / 10))]),
-                round(percentage, 2))
-            estimated_total_time = downloader.get_eta(human=True)
-            try:
-                current_message = (
-                    f"`Name` : `{file_name}`\n"
-                    "Status"
-                    f"\n**{status}**... | {progress_str}"
-                    f"\n{humanbytes(downloaded)} of {humanbytes(total_length)}"
-                    f" @ {speed}"
-                    f"\n`ETA` -> {estimated_total_time}"
-                )
-
-                if round(diff %
-                         10.00) == 0 and current_message != display_message:
-                    await target_file.edit(current_message)
-                    display_message = current_message
-            except Exception as e:
-                LOGS.info(str(e))
-        if downloader.isSuccessful():
-            await target_file.edit("Downloaded to `{}` successfully !!".format(
-                downloaded_file_name))
-        else:
-            await target_file.edit("Incorrect URL\n{}".format(url))
-    elif target_file.reply_to_msg_id:
-        try:
-            c_time = time.time()
-            downloaded_file_name = await target_file.client.download_media(
-                await target_file.get_reply_message(),
-                TEMP_DOWNLOAD_DIRECTORY,
-                progress_callback=lambda d, t: asyncio.get_event_loop(
-                ).create_task(
-                    progress(d, t, target_file, c_time, "[DOWNLOAD]")))
-        except Exception as e:  # pylint:disable=C0103,W0703
-            await target_file.edit(str(e))
-        else:
-            await target_file.edit("Downloaded to `{}` successfully !!".format(
-                downloaded_file_name))
-    else:
-        await target_file.edit(
-            "Reply to a message to download to my local server.")
+MEGA_DL = "nana/downloads/mega/"
 
 
-@register(pattern=r".uploadir (.*)", outgoing=True)
-async def uploadir(udir_event):
-    """ For .uploadir command, allows you to upload everything from a folder in the server"""
-    input_str = udir_event.pattern_match.group(1)
-    if os.path.exists(input_str):
-        await udir_event.edit("Processing ...")
-        lst_of_files = []
-        for r, d, f in os.walk(input_str):
-            for file in f:
-                lst_of_files.append(os.path.join(r, file))
-            for file in d:
-                lst_of_files.append(os.path.join(r, file))
-        LOGS.info(lst_of_files)
-        uploaded = 0
-        await udir_event.edit(
-            "Found {} files. Uploading will start soon. Please wait!".format(
-                len(lst_of_files)))
-        for single_file in lst_of_files:
-            if os.path.exists(single_file):
-                # https://stackoverflow.com/a/678242/4723940
-                caption_rts = os.path.basename(single_file)
-                c_time = time.time()
-                if not caption_rts.lower().endswith(".mp4"):
-                    await udir_event.client.send_file(
-                        udir_event.chat_id,
-                        single_file,
-                        caption=caption_rts,
-                        force_document=False,
-                        allow_cache=False,
-                        reply_to=udir_event.message.id,
-                        progress_callback=lambda d, t: asyncio.get_event_loop(
-                        ).create_task(
-                            progress(d, t, udir_event, c_time, "[UPLOAD]",
-                                     single_file)))
-                else:
-                    thumb_image = os.path.join(input_str, "thumb.jpg")
-                    c_time = time.time()
-                    metadata = extractMetadata(createParser(single_file))
-                    duration = 0
-                    width = 0
-                    height = 0
-                    if metadata.has("duration"):
-                        duration = metadata.get("duration").seconds
-                    if metadata.has("width"):
-                        width = metadata.get("width")
-                    if metadata.has("height"):
-                        height = metadata.get("height")
-                    await udir_event.client.send_file(
-                        udir_event.chat_id,
-                        single_file,
-                        caption=caption_rts,
-                        thumb=thumb_image,
-                        force_document=False,
-                        allow_cache=False,
-                        reply_to=udir_event.message.id,
-                        attributes=[
-                            DocumentAttributeVideo(
-                                duration=duration,
-                                w=width,
-                                h=height,
-                                round_message=False,
-                                supports_streaming=True,
-                            )
-                        ],
-                        progress_callback=lambda d, t: asyncio.get_event_loop(
-                        ).create_task(
-                            progress(d, t, udir_event, c_time, "[UPLOAD]",
-                                     single_file)))
-                os.remove(single_file)
-                uploaded = uploaded + 1
-        await udir_event.edit(
-            "Uploaded {} files successfully !!".format(uploaded))
-    else:
-        await udir_event.edit("404: Directory Not Found")
+async def subprocess_run(message, cmd):
+	subproc = await asyncSubprocess(cmd, stdout=asyncPIPE, stderr=asyncPIPE)
+	stdout, stderr = await subproc.communicate()
+	exitCode = subproc.returncode
+	if exitCode != 0:
+		await message.edit(
+			'**An error was detected while running subprocess.**\n'
+			f'exitCode : `{exitCode}`\n'
+			f'stdout : `{stdout.decode().strip()}`\n'
+			f'stderr : `{stderr.decode().strip()}`')
+		return exitCode
+	return stdout.decode().strip(), stderr.decode().strip(), exitCode
+
+CURRENT_COUNTER = {}
+async def callback_dl(current, total, chat_id, message, client, is_mirror=False, nama=None):
+	global CURRENT_COUNTER
+	if not CURRENT_COUNTER.get(chat_id + message.message_id):
+		await message.edit("__[{}] Downloading...__".format("{:.1f}%".format(current * 100 / total)))
+		CURRENT_COUNTER[chat_id + message.message_id] = 0
+	CURRENT_COUNTER[chat_id + message.message_id] += 1
+	if CURRENT_COUNTER[chat_id + message.message_id] % 20 == 0:
+		try:
+			await message.edit("__[{}] Downloading...__".format("{:.1f}%".format(current * 100 / total)))
+		except Exception as err:
+			print("Error: failed to edit message: " + str(err))
+		print("{:.1f}%".format(current * 100 / total))
+	else:
+		print("{:.1f}%".format(current * 100 / total))
+
+async def download_url(message, url, file_name, is_mirror=False):
+	start = int(time.time())
+	global CURRENT_COUNTER
+	# downloader = Downloader(url=url)
+	downloader = SmartDL(url, "nana/downloads/" + file_name, progress_bar=False)
+	try:
+		downloader.start(blocking=False)
+	except HTTPError as e:
+		return await message.edit(f"`Err: {str(e)}`")
+	c_time = time.time()
+	CURRENT_COUNTER[file_name] = 0
+	while not downloader.isFinished() and downloader.get_status() == "downloading":
+		status = downloader.get_status().capitalize()
+		total_length = downloader.filesize if downloader.filesize else None
+		downloaded = downloader.get_dl_size()
+		diff = time.time() - c_time
+		percentage = "{:.1f}%".format(downloader.get_progress() * 100)
+		speed = downloader.get_speed()
+		estimated_total_time = round(downloader.get_eta())
+		try:
+			if CURRENT_COUNTER[file_name] % 500000 == 0:
+				text = "__[{}] {} **{}**__\n{} of {} | {}/s\n**ETA** {} | {}".format(percentage, status, file_name, convert_size(downloaded), convert_size(total_length), convert_size(speed), time_parser_int(estimated_total_time), time_parser_int(round(diff)))
+				await message.edit(text)
+		except Exception as e:
+			print(e)
+		CURRENT_COUNTER[file_name] += 1
+		if status == "Combining":
+			text = "__[DONE] {} **{}**__\n{} of {} | {}/s\n**ETA** {} | {}".format(status, file_name, convert_size(downloaded), convert_size(total_length), convert_size(speed), time_parser_int(estimated_total_time), time_parser_int(round(diff)))
+			await message.edit(text)
+			wait = round(downloader.get_eta())
+			await asyncio.sleep(wait)
+	if downloader.isSuccessful():
+		download_time = round(downloader.get_dl_time() + wait)
+		text = "__[DONE] Downloaded **{}**__\nDownload took: {}".format(file_name, time_parser_int(download_time))
+		return await message.edit(text)
+	else:
+		await message.edit("Failed to download")
+		for e in downloader.get_errors():
+			log.error(str(e))
 
 
-@register(pattern=r".upload (.*)", outgoing=True)
-async def upload(u_event):
-    """ For .upload command, allows you to upload a file from the userbot's server """
-    await u_event.edit("Processing ...")
-    input_str = u_event.pattern_match.group(1)
-    if input_str in ("userbot.session", "config.env"):
-        return await u_event.edit("`That's a dangerous operation! Not Permitted!`")
-    if os.path.exists(input_str):
-        c_time = time.time()
-        await u_event.client.send_file(
-            u_event.chat_id,
-            input_str,
-            force_document=True,
-            allow_cache=False,
-            reply_to=u_event.message.id,
-            progress_callback=lambda d, t: asyncio.get_event_loop(
-            ).create_task(
-                progress(d, t, u_event, c_time, "[UPLOAD]", input_str)))
-        await u_event.edit("Uploaded successfully !!")
-    else:
-        await u_event.edit("404: File Not Found")
+async def download_reply_nocall(client, message):
+	if message.reply_to_message.photo:
+		nama = "photo_{}_{}.png".format(message.reply_to_message.photo.file_id, message.reply_to_message.photo.date)
+		await client.download_media(message.reply_to_message.photo, file_name="nana/downloads/" + nama)
+	elif message.reply_to_message.animation:
+		nama = "giphy_{}-{}.gif".format(message.reply_to_message.animation.date, message.reply_to_message.animation.file_size)
+		await client.download_media(message.reply_to_message.animation, file_name="nana/downloads/" + nama)
+	elif message.reply_to_message.video:
+		nama = "video_{}-{}.mp4".format(message.reply_to_message.video.date, message.reply_to_message.video.file_size)
+		await client.download_media(message.reply_to_message.video, file_name="nana/downloads/" + nama)
+	elif message.reply_to_message.sticker:
+		nama = "sticker_{}_{}.webp".format(message.reply_to_message.sticker.date, message.reply_to_message.sticker.set_name)
+		await client.download_media(message.reply_to_message.sticker, file_name="nana/downloads/" + nama)
+	elif message.reply_to_message.audio:
+		nama = "{}".format(message.reply_to_message.audio.file_name)
+		await client.download_media(message.reply_to_message.audio, file_name="nana/downloads/" + nama)
+	elif message.reply_to_message.voice:
+		nama = "audio_{}.ogg".format(message.reply_to_message.voice)
+		await client.download_media(message.reply_to_message.voice, file_name="nana/downloads/" + nama)
+	elif message.reply_to_message.document:
+		nama = "{}".format(message.reply_to_message.document.file_name)
+		await client.download_media(message.reply_to_message.document, file_name="nana/downloads/" + nama)
+	else:
+		return False
+	return "nana/downloads/" + nama
 
 
-def get_video_thumb(file, output=None, width=90):
-    """ Get video thumbnail """
-    metadata = extractMetadata(createParser(file))
-    popen = subprocess.Popen(
-        [
-            "ffmpeg",
-            "-i",
-            file,
-            "-ss",
-            str(
-                int((0, metadata.get("duration").seconds
-                     )[metadata.has("duration")] / 2)),
-            "-filter:v",
-            "scale={}:-1".format(width),
-            "-vframes",
-            "1",
-            output,
-        ],
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    if not popen.returncode and os.path.lexists(file):
-        return output
-    return None
+@app.on_message(Filters.user("self") & Filters.command(["dl"], Command))
+async def download_from_url(client, message):
+	if len(message.text.split()) == 1:
+		await message.edit("Usage: `dl url filename`")
+		return
+	if not os.path.isdir("nana/downloads"):
+		os.makedirs("nana/downloads")
+	if len(message.text.split()) == 2:
+		URL = message.text.split(None, 1)[1]
+		file_name = URL.split("/")[-1]
+	elif len(message.text.split()) >= 3:
+		URL = message.text.split(None, 2)[1]
+		file_name = message.text.split(None, 2)[2]
+	else:
+		await message.edit("Invaild args given!")
+		return
+	try:
+		os.listdir("nana/downloads/")
+	except FileNotFoundError:
+		await message.edit("Invalid download path in config!")
+		return
+	is_mega = re.findall(r'\bhttps?://.*mega.*\.nz\S+', URL)
+	if is_mega:
+		await mega_downlaoder(message, is_mega[0], file_name=file_name if len(message.text.split()) >= 3 else None)
+		return
+	download = await download_url(message, URL, file_name)
+	# await message.edit(download)
 
 
-def extract_w_h(file):
-    """ Get width and height of media """
-    command_to_run = [
-        "ffprobe",
-        "-v",
-        "quiet",
-        "-print_format",
-        "json",
-        "-show_format",
-        "-show_streams",
-        file,
-    ]
-    # https://stackoverflow.com/a/11236144/4723940
-    try:
-        t_response = subprocess.check_output(command_to_run,
-                                             stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError as exc:
-        LOGS.warning(exc)
-    else:
-        x_reponse = t_response.decode("UTF-8")
-        response_json = json.loads(x_reponse)
-        width = int(response_json["streams"][0]["width"])
-        height = int(response_json["streams"][0]["height"])
-        return width, height
+@app.on_message(Filters.user("self") & Filters.command(["download"], Command))
+async def download_from_telegram(client, message):
+	if not os.path.isdir("nana/downloads"):
+		os.makedirs("nana/downloads")
+	if message.reply_to_message:
+		await message.edit("__Starting download...__")
+
+		start = int(time.time())
+		msgid = message.message_id # result.updates[-1].message.id
+		if message.reply_to_message.photo:
+			nama = "photo_{}_{}.png".format(message.reply_to_message.photo.file_id, message.reply_to_message.photo.date)
+			await client.download_media(message.reply_to_message.photo, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		elif message.reply_to_message.animation:
+			nama = "giphy_{}-{}.gif".format(message.reply_to_message.animation.date, message.reply_to_message.animation.file_size)
+			await client.download_media(message.reply_to_message.animation, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		elif message.reply_to_message.video:
+			nama = "video_{}-{}.mp4".format(message.reply_to_message.video.date, message.reply_to_message.video.file_size)
+			await client.download_media(message.reply_to_message.video, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		elif message.reply_to_message.sticker:
+			nama = "sticker_{}_{}.webp".format(message.reply_to_message.sticker.date, message.reply_to_message.sticker.set_name)
+			await client.download_media(message.reply_to_message.sticker, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		elif message.reply_to_message.audio:
+			nama = "{}".format(message.reply_to_message.audio.file_name)
+			await client.download_media(message.reply_to_message.audio, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		elif message.reply_to_message.voice:
+			nama = "audio_{}.ogg".format(message.reply_to_message.voice)
+			await client.download_media(message.reply_to_message.voice, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		elif message.reply_to_message.document:
+			nama = "{}".format(message.reply_to_message.document.file_name)
+			await client.download_media(message.reply_to_message.document, file_name="nana/downloads/" + nama, progress=callback_dl, progress_args=(message.chat.id, msgid, client,))
+		else:
+			await message.edit("Unknown file!")
+			# await message.edit("Unknown file!")
+			return
+		end = int(time.time())
+		times = time_parser(start, end)
+
+		text = f"**⬇ Downloaded!**\n🗂 File name: `{nama}`\n🏷 Saved to: `nana/downloads/`\n⏲ Downloaded in: {times}"
+		await message.edit(text)
+	else:
+		await message.edit("Reply document to download it")
 
 
-@register(pattern=r".uploadas(stream|vn|all) (.*)", outgoing=True)
-async def uploadas(uas_event):
-    """ For .uploadas command, allows you to specify some arguments for upload. """
-    await uas_event.edit("Processing ...")
-    type_of_upload = uas_event.pattern_match.group(1)
-    supports_streaming = False
-    round_message = False
-    spam_big_messages = False
-    if type_of_upload == "stream":
-        supports_streaming = True
-    if type_of_upload == "vn":
-        round_message = True
-    if type_of_upload == "all":
-        spam_big_messages = True
-    input_str = uas_event.pattern_match.group(2)
-    thumb = None
-    file_name = None
-    if "|" in input_str:
-        file_name, thumb = input_str.split("|")
-        file_name = file_name.strip()
-        thumb = thumb.strip()
-    else:
-        file_name = input_str
-        thumb_path = "a_random_f_file_name" + ".jpg"
-        thumb = get_video_thumb(file_name, output=thumb_path)
-    if os.path.exists(file_name):
-        metadata = extractMetadata(createParser(file_name))
-        duration = 0
-        width = 0
-        height = 0
-        if metadata.has("duration"):
-            duration = metadata.get("duration").seconds
-        if metadata.has("width"):
-            width = metadata.get("width")
-        if metadata.has("height"):
-            height = metadata.get("height")
-        try:
-            if supports_streaming:
-                c_time = time.time()
-                await uas_event.client.send_file(
-                    uas_event.chat_id,
-                    file_name,
-                    thumb=thumb,
-                    caption=input_str,
-                    force_document=False,
-                    allow_cache=False,
-                    reply_to=uas_event.message.id,
-                    attributes=[
-                        DocumentAttributeVideo(
-                            duration=duration,
-                            w=width,
-                            h=height,
-                            round_message=False,
-                            supports_streaming=True,
-                        )
-                    ],
-                    progress_callback=lambda d, t: asyncio.get_event_loop(
-                    ).create_task(
-                        progress(d, t, uas_event, c_time, "[UPLOAD]",
-                                 file_name)))
-            elif round_message:
-                c_time = time.time()
-                await uas_event.client.send_file(
-                    uas_event.chat_id,
-                    file_name,
-                    thumb=thumb,
-                    allow_cache=False,
-                    reply_to=uas_event.message.id,
-                    video_note=True,
-                    attributes=[
-                        DocumentAttributeVideo(
-                            duration=0,
-                            w=1,
-                            h=1,
-                            round_message=True,
-                            supports_streaming=True,
-                        )
-                    ],
-                    progress_callback=lambda d, t: asyncio.get_event_loop(
-                    ).create_task(
-                        progress(d, t, uas_event, c_time, "[UPLOAD]",
-                                 file_name)))
-            elif spam_big_messages:
-                return await uas_event.edit("TBD: Not (yet) Implemented")
-            os.remove(thumb)
-            await uas_event.edit("Uploaded successfully !!")
-        except FileNotFoundError as err:
-            await uas_event.edit(str(err))
-    else:
-        await uas_event.edit("404: File Not Found")
-
-
-CMD_HELP.update({
-    "download":
-    ".download <link|filename> or reply to media\
-\nUsage: Downloads file to the server.\
-\n\n.upload <path in server>\
-\nUsage: Uploads a locally stored file to the chat."
-})
+async def decrypt_file(megadl, file_path, temp_file_path, hex_key, hex_raw_key):
+	cmd = ("cat '{}' | openssl enc -d -aes-128-ctr -K {} -iv {} > '{}'".format(temp_file_path, hex_key, hex_raw_key, file_path))
+	if await subprocess_run(megadl, cmd):
+		os.remove(temp_file_path)
+	else:
+		raise FileNotFoundError(file_path)
+	return
