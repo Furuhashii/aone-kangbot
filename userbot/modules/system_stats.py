@@ -135,20 +135,26 @@ async def pipcheck(pip):
         await pip.edit("`Use .help pip to see an example`")
 
 
-@register(outgoing=True, pattern="^.alive$")
+@register(outgoing=True, pattern="^.azumii$")
 async def amireallyalive(alive):
     """ For .alive command, check if the bot is running.  """
     logo = AONE_LOGO
     alive_text = ("`"
                      f"••••••••••••••••••••••••••••••• \n"
-                     "Aone-Kangbot is running, Enjoy! \n\n"
+                     f"  Uhm ohayou~~, ghosujin-sama! \n"
+                     f"   (っ•́｡•́)♪♬ ~, all is well \n\n"
                      f"=============================== \n"
-                     f"Telethon version: {version.__version__} \n"
-                     f"Aone-Kangbot version: {VERSION} \n"
-                     f"Python: {python_version()} \n"
+                     f"versi Telethon: {version.__version__} \n"
+                     f"versi Python: {python_version()} \n"
+                     f"versi Devices: Ginkgo \n"
+                     F"versi OS: Android Q (10) \n"
                      f"=============================== \n\n"
-                     f"User: {DEFAULTUSER} \n"
+                     f"Owner            : Aone-id \n"
+                     f"My ghosujin-sama : {DEFAULTUSER} \n"
                      f"••••••••••••••••••••••••••••••• \n"
+                     f"Notes: \n"
+                     f"Semua modul telah aktiv, semoga \n"
+                     f"hari anda menyenangkan ~~ LOVE U \n"
                      " \n\n"
                      "`")
     await bot.send_file(alive.chat_id, logo, caption=alive_text)
